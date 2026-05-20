@@ -155,6 +155,118 @@ def test_post_extracts_og_video_variants(patch_get):
     }
 
 
+def test_photos_extracts_unique_fbids_and_urls(patch_get):
+    """Each photo CDN URL embeds /<asset_id>_<fbid>_... — extract both."""
+    html = (
+        "<html><body>"
+        # Same fbid appears twice in the HTML (different sizes) but should dedupe.
+        'src="https://scontent.example.fbcdn.net/v/t39/100100100_4242424242420_a.jpg"'
+        'src="https://scontent.example.fbcdn.net/v/t39/100100100_4242424242420_b.jpg"'
+        'src="https://scontent.example.fbcdn.net/v/t39/200200200_5353535353530_c.jpg"'
+        'src="https://scontent.example.fbcdn.net/v/t39/300300300_6464646464640_d.webp"'
+        "</body></html>"
+    )
+    patch_get(facebook, lambda url, kwargs: FakeResponse(text=html))
+    out = facebook.photos("pg")
+    assert out["count"] == 3
+    fbids = [p["fbid"] for p in out["photos"]]
+    assert fbids == ["4242424242420", "5353535353530", "6464646464640"]
+    # Order preserved; first occurrence wins.
+    assert out["photos"][0]["asset_id"] == "100100100"
+    assert out["photos"][0]["url"].endswith("_a.jpg")
+    assert out["photos"][0]["permalink"] == "https://www.facebook.com/photo/?fbid=4242424242420"
+
+
+def test_photos_respects_limit(patch_get):
+    html = "".join(
+        f'<img src="https://scontent.fbcdn.net/v/t39/{i*1000000}_{i*100000000000}_x.jpg">'
+        for i in range(1, 6)
+    )
+    patch_get(facebook, lambda url, kwargs: FakeResponse(text=html))
+    out = facebook.photos("pg", limit=3)
+    assert out["count"] == 3
+
+
+def test_photos_uses_photos_subpath(patch_get):
+    seen = {}
+
+    def factory(url, kwargs):
+        seen["url"] = url
+        return FakeResponse(text="")
+
+    patch_get(facebook, factory)
+    facebook.photos("@somepage/")
+    assert seen["url"] == "https://www.facebook.com/somepage/photos"
+
+
+def test_videos_extracts_playable_mp4_urls(patch_get):
+    # JSON-style escaped URLs, as embedded in FB's React payload.
+    html = (
+        '<script>'
+        '{"playable_url":"https:\\/\\/video.example.fbcdn.net\\/v\\/clip1.mp4?bitrate=500"}'
+        '{"playable_url_quality_hd":"https:\\/\\/video.example.fbcdn.net\\/v\\/clip2.mp4"}'
+        # Duplicate should dedupe.
+        '{"playable_url":"https:\\/\\/video.example.fbcdn.net\\/v\\/clip1.mp4?bitrate=500"}'
+        '{"video_id":"1234567890123"}'
+        '{"video_id":"9876543210987"}'
+        '</script>'
+    )
+    patch_get(facebook, lambda url, kwargs: FakeResponse(text=html))
+    out = facebook.videos("pg")
+    assert out["count"] == 2
+    assert "https://video.example.fbcdn.net/v/clip1.mp4?bitrate=500" in out["playable_urls"]
+    assert "https://video.example.fbcdn.net/v/clip2.mp4" in out["playable_urls"]
+    assert out["video_ids"] == ["1234567890123", "9876543210987"]
+
+
+def test_videos_uses_videos_subpath(patch_get):
+    seen = {}
+    patch_get(
+        facebook,
+        lambda url, kwargs: (seen.setdefault("url", url), FakeResponse(text=""))[1],
+    )
+    facebook.videos("somepage")
+    assert seen["url"] == "https://www.facebook.com/somepage/videos"
+
+
+def test_posts_finds_permalink_paths(patch_get):
+    html = (
+        '<a href="/facebook/posts/abc123">post</a>'
+        '<a href="/facebook/videos/v777">vid</a>'
+        '<a href="/facebook/photos/p888">pho</a>'
+        # Duplicate should dedupe.
+        '<a href="/facebook/posts/abc123">again</a>'
+    )
+    patch_get(facebook, lambda url, kwargs: FakeResponse(text=html))
+    out = facebook.posts("facebook")
+    assert out["count"] == 3
+    kinds = {p["kind"] for p in out["posts"]}
+    assert kinds == {"posts", "videos", "photos"}
+    assert any(
+        p["permalink"] == "https://www.facebook.com/facebook/posts/abc123"
+        for p in out["posts"]
+    )
+
+
+def test_posts_falls_back_to_fbids(patch_get):
+    """When no permalink paths are server-rendered, surface bare fbids."""
+    html = '<a href="/somelink?fbid=123456789012345&foo=bar">x</a>' \
+           'href="/x?fbid=987654321098765"'
+    patch_get(facebook, lambda url, kwargs: FakeResponse(text=html))
+    out = facebook.posts("page")
+    assert out["count"] == 2
+    fbids = [p["id"] for p in out["posts"]]
+    assert "123456789012345" in fbids
+    assert "987654321098765" in fbids
+    assert all(p["kind"] == "photo" for p in out["posts"])
+
+
+def test_posts_includes_note_about_logged_out_limitation(patch_get):
+    patch_get(facebook, lambda url, kwargs: FakeResponse(text=""))
+    out = facebook.posts("page")
+    assert "logged-out" in out["note"]
+
+
 def test_post_groups_multiple_og_video_tags(patch_get):
     """Some FB pages emit multiple og:video tags (e.g., one per format)."""
     html = (

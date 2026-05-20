@@ -15,7 +15,22 @@ from typing import Any
 from .http import get
 
 PROFILE_URL = "https://www.facebook.com/{username}"
+PHOTOS_URL = "https://www.facebook.com/{username}/photos"
+VIDEOS_URL = "https://www.facebook.com/{username}/videos"
 POST_URL_PREFIX = "https://www.facebook.com/"
+
+# CDN URLs embed an asset_id and an fbid like:
+#   .../t39.30808-6/<asset_id>_<fbid>_<rest>.jpg
+_PHOTO_CDN_RE = re.compile(
+    r'https://[^"\\\s<>]*scontent[^"\\\s<>]*/(\d{6,})_(\d{10,})_[^"\\\s<>]+\.(?:jpg|jpeg|webp|png)',
+    re.IGNORECASE,
+)
+# Native MP4 playable URL inside the videos page JSON.
+_PLAYABLE_URL_RE = re.compile(r'"playable_url(?:_quality_hd)?":"([^"]+\.mp4[^"]*)"')
+# Video IDs in the same payload, in document order.
+_VIDEO_ID_RE = re.compile(r'"video_id":"(\d{10,})"')
+# Post fbids in the main page HTML — used by the best-effort posts() scraper.
+_POST_FBID_RE = re.compile(r'fbid=(\d{12,})')
 
 _META_RE = re.compile(
     r'<meta\s+(?:property|name)="([^"]+)"\s+content="([^"]*)"', re.IGNORECASE
@@ -99,6 +114,138 @@ def profile(username: str) -> dict[str, Any]:
         "type": metas.get("og:type"),
         "followers_text": followers.group(0) if followers else None,
         "likes_text": likes.group(0) if likes else None,
+    }
+
+
+def _photo_permalink(fbid: str) -> str:
+    return f"https://www.facebook.com/photo/?fbid={fbid}"
+
+
+def photos(username: str, limit: int = 24) -> dict[str, Any]:
+    """List recent photos from a public Page's /photos grid.
+
+    Returns up to ~10–24 unique photos: the CDN image URL, the asset fbid
+    extracted from that URL, and a viewer permalink. The order matches
+    document order on the page (roughly newest-first).
+    """
+    username = username.lstrip("@").strip("/")
+    url = PHOTOS_URL.format(username=username)
+    resp = get(url, headers=_fb_headers())
+    seen: set[str] = set()
+    items: list[dict[str, str]] = []
+    for m in _PHOTO_CDN_RE.finditer(resp.text):
+        fbid = m.group(2)
+        if fbid in seen:
+            continue
+        seen.add(fbid)
+        items.append(
+            {
+                "fbid": fbid,
+                "asset_id": m.group(1),
+                "url": m.group(0),
+                "permalink": _photo_permalink(fbid),
+            }
+        )
+        if len(items) >= limit:
+            break
+    return {
+        "username": username,
+        "source": url,
+        "count": len(items),
+        "photos": items,
+    }
+
+
+def _decode_json_url(s: str) -> str:
+    """JSON strings escape forward slashes as `\\/`; un-escape and \\u00XX."""
+    return s.replace("\\/", "/").encode("utf-8").decode("unicode_escape", errors="replace")
+
+
+def videos(username: str, limit: int = 24) -> dict[str, Any]:
+    """List recent native video MP4 URLs from a public Page's /videos page.
+
+    The surrounding React payload is heavily obfuscated, so this returns
+    just the playable URLs (the actual MP4 files) and any video IDs found
+    in the same payload. Titles / durations / dates are not reliably
+    extractable without authentication.
+    """
+    username = username.lstrip("@").strip("/")
+    url = VIDEOS_URL.format(username=username)
+    resp = get(url, headers=_fb_headers())
+    text = resp.text
+    seen_urls: set[str] = set()
+    playable: list[str] = []
+    for m in _PLAYABLE_URL_RE.finditer(text):
+        decoded = _decode_json_url(m.group(1))
+        if decoded in seen_urls:
+            continue
+        seen_urls.add(decoded)
+        playable.append(decoded)
+        if len(playable) >= limit:
+            break
+    video_ids = list(dict.fromkeys(_VIDEO_ID_RE.findall(text)))[:limit]
+    return {
+        "username": username,
+        "source": url,
+        "count": len(playable),
+        "video_ids": video_ids,
+        "playable_urls": playable,
+    }
+
+
+def posts(username: str, limit: int = 24) -> dict[str, Any]:
+    """Best-effort: list post permalinks visible on the public Page.
+
+    Facebook does not render the main feed to logged-out visitors, so this
+    typically returns very little (often just the pinned/cover post). For
+    real post coverage, use the Graph API with an access token.
+    """
+    username = username.lstrip("@").strip("/")
+    url = PROFILE_URL.format(username=username)
+    resp = get(url, headers=_fb_headers())
+    text = resp.text
+    seen: set[str] = set()
+    items: list[dict[str, str]] = []
+    # Look for post permalink paths first (most reliable when present).
+    path_re = re.compile(
+        rf'/{re.escape(username)}/(posts|videos|photos)/([A-Za-z0-9]+)'
+    )
+    for m in path_re.finditer(text):
+        kind, ident = m.group(1), m.group(2)
+        key = f"{kind}:{ident}"
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "kind": kind,
+                "id": ident,
+                "permalink": f"https://www.facebook.com/{username}/{kind}/{ident}",
+            }
+        )
+        if len(items) >= limit:
+            break
+    # Fallback: bare fbids on the main page.
+    if not items:
+        for fbid in dict.fromkeys(_POST_FBID_RE.findall(text)):
+            items.append(
+                {
+                    "kind": "photo",
+                    "id": fbid,
+                    "permalink": _photo_permalink(fbid),
+                }
+            )
+            if len(items) >= limit:
+                break
+    return {
+        "username": username,
+        "source": url,
+        "count": len(items),
+        "note": (
+            "Facebook does not server-render the post feed for logged-out "
+            "visitors; results are limited."
+        ),
+        "posts": items,
     }
 
 

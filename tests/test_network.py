@@ -124,3 +124,38 @@ def test_facebook_post_live():
     assert (data["url"] or "").startswith("https://www.facebook.com/")
     # Either a title or a description should be present on a public page.
     assert data["title"] or data["description"]
+
+
+def test_facebook_photos_live():
+    """facebook is a small public Page with a populated /photos grid."""
+    try:
+        data = facebook.photos("facebook")
+    except Exception as e:  # noqa: BLE001
+        _skip_on_transient(e)
+    assert data["count"] >= 3, "expected at least 3 photos in the grid"
+    first = data["photos"][0]
+    assert first["fbid"].isdigit()
+    assert first["url"].startswith("https://scontent")
+    assert first["permalink"] == f"https://www.facebook.com/photo/?fbid={first['fbid']}"
+
+
+def test_facebook_videos_live():
+    try:
+        data = facebook.videos("facebook")
+    except Exception as e:  # noqa: BLE001
+        _skip_on_transient(e)
+    # If the page has any videos at all, we should pull at least one MP4 URL.
+    if data["count"] == 0:
+        pytest.skip("page has no videos right now")
+    assert data["playable_urls"][0].startswith("https://")
+    assert ".mp4" in data["playable_urls"][0]
+
+
+def test_facebook_posts_live():
+    try:
+        data = facebook.posts("facebook")
+    except Exception as e:  # noqa: BLE001
+        _skip_on_transient(e)
+    # Logged-out main page is thin — we just verify the structure and note.
+    assert "logged-out" in data["note"]
+    assert isinstance(data["posts"], list)

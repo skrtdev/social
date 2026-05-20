@@ -42,6 +42,9 @@ social instagram post https://www.instagram.com/p/DYkrf_cS9-t/
 # Facebook
 social facebook profile zuck
 social facebook post https://www.facebook.com/zuck/posts/...
+social facebook photos facebook      # recent photos (CDN URL + permalink)
+social facebook videos facebook      # recent native MP4 URLs
+social facebook posts  facebook      # best-effort permalinks (limited)
 ```
 
 Add `--json` / `-j` to any command for raw JSON instead of the rich table.
@@ -61,10 +64,12 @@ reels apart from feed posts), accessibility captions.
 falls back to OpenGraph metadata (which is what IG currently serves to
 logged-out scrapers, as of the time of writing).
 
-**Facebook** — OpenGraph metadata. Grouped `og:image` / `og:video` tags so
-each variant comes back with its own `width` / `height` / `type`. This is
-genuinely the thinnest surface of the three — for richer FB data you need a
-Graph API token.
+**Facebook** — OpenGraph metadata on profile/post pages with grouped
+`og:image` / `og:video` variants (each with its own `width` / `height` / `type`).
+Plus scraped page feeds: `photos` returns recent photos with CDN URLs +
+permalinks; `videos` returns native MP4 playable URLs. Post-feed text isn't
+server-rendered to logged-out visitors, so `posts` is best-effort and thin.
+Groups always require login — not supported.
 
 ## Caveats
 

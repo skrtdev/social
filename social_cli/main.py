@@ -63,13 +63,16 @@ Instagram lookups via web_profile_info and post LD+JSON/OpenGraph.
 """
 
 _FB_HELP = """\
-Facebook lookups via OpenGraph metadata on public pages and posts.
+Facebook lookups via OpenGraph metadata + page-feed scraping.
 
   profile  — name, description, image, og:image variants
   post     — title, description, og:image[*], og:video[*] variants
+  photos   — recent photos from /photos (CDN URL + asset fbid + permalink)
+  videos   — recent native MP4 URLs from /videos
+  posts    — best-effort scrape of post permalinks (logged-out is thin)
 
-Note: Facebook gates almost everything behind login. For rich data
-(feeds, native MP4s, reactions) use the Graph API with a token.
+Note: Facebook Groups always require login and are not supported.
+For richer page data, use the Graph API with a token.
 """
 
 app = typer.Typer(
@@ -262,6 +265,72 @@ def fb_post(
       social facebook post zuck/posts/123
     """
     _run(facebook.post, url, json=json, title="Facebook post")
+
+
+@fb_app.command("photos")
+def fb_photos(
+    username: str = typer.Argument(
+        ...,
+        help="Facebook Page username/slug (e.g. 'facebook').",
+        metavar="USERNAME",
+    ),
+    json: bool = JsonOpt,
+) -> None:
+    """List recent photos from a public Facebook Page.
+
+    Scrapes the /photos grid and returns up to ~24 unique photos with
+    their CDN URL, asset fbid, and a viewer permalink. Roughly newest-first.
+
+    Example:
+
+      social facebook photos facebook
+      social facebook photos zuck --json
+    """
+    _run(facebook.photos, username, json=json, title=f"Photos: {username}")
+
+
+@fb_app.command("videos")
+def fb_videos(
+    username: str = typer.Argument(
+        ...,
+        help="Facebook Page username/slug.",
+        metavar="USERNAME",
+    ),
+    json: bool = JsonOpt,
+) -> None:
+    """List recent native MP4 video URLs from a public Facebook Page.
+
+    Returns the actual playable MP4 URLs (the same ones the FB player
+    streams). Titles / durations / dates are not reliably extractable
+    from the obfuscated React payload — for that you need Graph API.
+
+    Example:
+
+      social facebook videos facebook
+    """
+    _run(facebook.videos, username, json=json, title=f"Videos: {username}")
+
+
+@fb_app.command("posts")
+def fb_posts(
+    username: str = typer.Argument(
+        ...,
+        help="Facebook Page username/slug.",
+        metavar="USERNAME",
+    ),
+    json: bool = JsonOpt,
+) -> None:
+    """Best-effort: list post permalinks visible on a public Page.
+
+    Facebook does not server-render the main post feed for logged-out
+    visitors, so this usually returns very little (often just a pinned
+    or cover post). Use the Graph API for real post coverage.
+
+    Example:
+
+      social facebook posts facebook
+    """
+    _run(facebook.posts, username, json=json, title=f"Posts: {username}")
 
 
 def _entrypoint_path() -> Path:
