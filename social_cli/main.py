@@ -42,9 +42,21 @@ Examples:
   social instagram post DYkrf_cS9-t
   social facebook profile zuck
   social facebook post https://www.facebook.com/zuck/posts/...
+  social facebook photos facebook --all --limit 100   # needs \\[browser]
 
-Add -j / --json to any subcommand for raw JSON instead of a rich table.
-Run `social install` to symlink the binary onto your PATH.
+Global flags:
+  -j / --json   Emit raw JSON instead of a rich table (works on any subcommand).
+
+Listing commands (fb photos / videos / posts) also accept:
+  -n / --limit N  Cap the number of items returned.
+  -a / --all      Drive headless Chromium (Playwright) to scroll for more
+                  than the server-rendered first batch. Requires the optional
+                  \\[browser] extra:
+                      pip install '.\\[browser]' && playwright install chromium
+
+Setup:
+  social install     Symlink the binary onto your PATH (default ~/.local/bin).
+  social uninstall   Remove that symlink.
 """
 
 _X_HELP = """\
@@ -70,6 +82,11 @@ Facebook lookups via OpenGraph metadata + page-feed scraping.
   photos   — recent photos from /photos (CDN URL + asset fbid + permalink)
   videos   — recent native MP4 URLs from /videos
   posts    — best-effort scrape of post permalinks (logged-out is thin)
+
+`photos` and `videos` accept -n/--limit and -a/--all. Without --all they
+return the ~10 items FB server-renders. With --all they drive a headless
+Chromium (requires the optional \\[browser] extra) to scroll past the login
+modal and collect older items up to --limit.
 
 Note: Facebook Groups always require login and are not supported.
 For richer page data, use the Graph API with a token.
@@ -120,8 +137,8 @@ def _run(fn: Callable[..., dict[str, Any]], *args: Any, json: bool, title: str) 
 JsonOpt = typer.Option(False, "--json", "-j", help="Emit raw JSON instead of a table.")
 AllOpt = typer.Option(
     False, "--all", "-a",
-    help="Drive a headless Chromium (Playwright) to scroll for more items. "
-         "Requires `pip install '.[browser]' && playwright install chromium`.",
+    help="Scroll a headless Chromium (Playwright) past the server-rendered "
+         "first batch. Needs the \\[browser] extra. Adds ~25s of latency.",
 )
 
 
@@ -285,12 +302,19 @@ def fb_photos(
 ) -> None:
     """List recent photos from a public Facebook Page.
 
-    Scrapes the /photos grid and returns photos with their CDN URL,
-    asset fbid, and viewer permalink. Roughly newest-first.
+    Each photo entry has:
+      fbid       — the asset fbid (extracted from the CDN URL itself)
+      asset_id   — internal asset id
+      url        — direct CDN image URL
+      permalink  — https://www.facebook.com/photo/?fbid=<fbid>
 
-    Default: one HTTP request → ~10 photos.
-    With `--all`: drives headless Chromium (Playwright) to scroll for
-    older photos, up to `--limit` (default 24, raise it for more).
+    Returned in document order (roughly newest-first). The response
+    includes a `mode` field of "http" or "browser" so you can tell which
+    path produced the data.
+
+    Default (HTTP): one request → the ~10 photos FB server-renders.
+    With --all: scrolls a headless Chromium until --limit is reached.
+    Requires the \\[browser] extra (see `social --help`).
 
     Examples:
 
@@ -319,9 +343,11 @@ def fb_videos(
 
     Returns the actual playable MP4 URLs (the same ones the FB player
     streams). Titles / durations / dates are not reliably extractable
-    from the obfuscated React payload — for that you need Graph API.
+    from the obfuscated React payload — use the Graph API for those.
 
-    With `--all`: drives headless Chromium to scroll for older videos.
+    Default (HTTP): one request → the ~10 videos FB server-renders.
+    With --all: scrolls a headless Chromium until --limit is reached.
+    Requires the \\[browser] extra.
 
     Examples:
 
@@ -347,7 +373,12 @@ def fb_posts(
 
     Facebook does not server-render the main post feed for logged-out
     visitors, so this usually returns very little (often just a pinned
-    or cover post). Use the Graph API for real post coverage.
+    or cover post). The response includes an explicit `note` field
+    flagging this.
+
+    `--all` is NOT supported here: even with a real browser, FB does not
+    expose the post feed to logged-out scrollers. For real post coverage
+    you need either auth cookies or the Graph API with a token.
 
     Example:
 
