@@ -261,6 +261,94 @@ def test_posts_falls_back_to_fbids(patch_get):
     assert all(p["kind"] == "photo" for p in out["posts"])
 
 
+def test_photos_all_invokes_browser_path(monkeypatch, patch_get):
+    """With all=True, photos() uses social_cli.browser.scroll_collect."""
+    from social_cli import browser as browser_mod
+
+    fake_items = [
+        {"fbid": "111", "asset_id": "1", "url": "u1", "permalink": "p1"},
+        {"fbid": "222", "asset_id": "2", "url": "u2", "permalink": "p2"},
+    ]
+
+    captured = {}
+
+    def fake_scroll_collect(url, extractor, *, key, max_items, **_kwargs):
+        captured["url"] = url
+        captured["key"] = key
+        captured["max_items"] = max_items
+        # The extractor should be the photo HTML parser.
+        sample_html = (
+            'https://scontent.example.fbcdn.net/v/t39/100100100_999888777666_x.jpg'
+        )
+        captured["extractor_works"] = bool(extractor(sample_html))
+        return fake_items
+
+    monkeypatch.setattr(browser_mod, "scroll_collect", fake_scroll_collect)
+    # Ensure no HTTP call happens in the browser path.
+    patch_get(facebook, lambda url, kwargs: pytest.fail("HTTP path used in browser mode"))
+
+    out = facebook.photos("facebook", limit=50, all=True)
+    assert out["mode"] == "browser"
+    assert out["count"] == 2
+    assert out["photos"] == fake_items
+    assert captured["url"] == "https://www.facebook.com/facebook/photos"
+    assert captured["key"] == "fbid"
+    assert captured["max_items"] == 50
+    assert captured["extractor_works"] is True
+
+
+def test_videos_all_invokes_browser_path(monkeypatch, patch_get):
+    from social_cli import browser as browser_mod
+
+    captured = {}
+
+    def fake_scroll_collect(url, extractor, *, key, max_items, **_kwargs):
+        captured["url"] = url
+        captured["key"] = key
+        return [
+            {"playable_url": "https://v/clip1.mp4"},
+            {"playable_url": "https://v/clip2.mp4"},
+        ]
+
+    monkeypatch.setattr(browser_mod, "scroll_collect", fake_scroll_collect)
+    patch_get(facebook, lambda url, kwargs: pytest.fail("HTTP path used in browser mode"))
+
+    out = facebook.videos("facebook", limit=10, all=True)
+    assert out["mode"] == "browser"
+    assert out["count"] == 2
+    assert out["playable_urls"] == ["https://v/clip1.mp4", "https://v/clip2.mp4"]
+    assert captured["url"] == "https://www.facebook.com/facebook/videos"
+    assert captured["key"] == "playable_url"
+
+
+def test_http_mode_label_when_all_is_false(patch_get):
+    """The default HTTP path now also reports mode='http'."""
+    patch_get(facebook, lambda url, kwargs: FakeResponse(text=""))
+    assert facebook.photos("pg")["mode"] == "http"
+    assert facebook.videos("pg")["mode"] == "http"
+
+
+def test_browser_unavailable_when_playwright_missing(monkeypatch):
+    """When Playwright isn't installed, the import raises BrowserUnavailable."""
+    import builtins
+    import sys
+    # Pretend playwright isn't installed.
+    sys.modules.pop("playwright", None)
+    sys.modules.pop("playwright.sync_api", None)
+    real_import = builtins.__import__
+
+    def fake_import(name, *a, **kw):
+        if name.startswith("playwright"):
+            raise ImportError("no playwright")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    from social_cli.browser import scroll_collect, BrowserUnavailable
+
+    with pytest.raises(BrowserUnavailable, match="isn't installed"):
+        scroll_collect("https://example.com", lambda h: [])
+
+
 def test_posts_includes_note_about_logged_out_limitation(patch_get):
     patch_get(facebook, lambda url, kwargs: FakeResponse(text=""))
     out = facebook.posts("page")

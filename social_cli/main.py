@@ -118,6 +118,11 @@ def _run(fn: Callable[..., dict[str, Any]], *args: Any, json: bool, title: str) 
 
 
 JsonOpt = typer.Option(False, "--json", "-j", help="Emit raw JSON instead of a table.")
+AllOpt = typer.Option(
+    False, "--all", "-a",
+    help="Drive a headless Chromium (Playwright) to scroll for more items. "
+         "Requires `pip install '.[browser]' && playwright install chromium`.",
+)
 
 
 @x_app.command("profile")
@@ -274,19 +279,29 @@ def fb_photos(
         help="Facebook Page username/slug (e.g. 'facebook').",
         metavar="USERNAME",
     ),
+    limit: int = typer.Option(24, "--limit", "-n", help="Max photos to return."),
+    all_: bool = AllOpt,
     json: bool = JsonOpt,
 ) -> None:
     """List recent photos from a public Facebook Page.
 
-    Scrapes the /photos grid and returns up to ~24 unique photos with
-    their CDN URL, asset fbid, and a viewer permalink. Roughly newest-first.
+    Scrapes the /photos grid and returns photos with their CDN URL,
+    asset fbid, and viewer permalink. Roughly newest-first.
 
-    Example:
+    Default: one HTTP request → ~10 photos.
+    With `--all`: drives headless Chromium (Playwright) to scroll for
+    older photos, up to `--limit` (default 24, raise it for more).
+
+    Examples:
 
       social facebook photos facebook
-      social facebook photos zuck --json
+      social facebook photos facebook --all --limit 100
+      social facebook photos zuck -n 50 -a -j
     """
-    _run(facebook.photos, username, json=json, title=f"Photos: {username}")
+    _run(
+        lambda u: facebook.photos(u, limit=limit, all=all_),
+        username, json=json, title=f"Photos: {username}",
+    )
 
 
 @fb_app.command("videos")
@@ -296,6 +311,8 @@ def fb_videos(
         help="Facebook Page username/slug.",
         metavar="USERNAME",
     ),
+    limit: int = typer.Option(24, "--limit", "-n", help="Max videos to return."),
+    all_: bool = AllOpt,
     json: bool = JsonOpt,
 ) -> None:
     """List recent native MP4 video URLs from a public Facebook Page.
@@ -304,11 +321,17 @@ def fb_videos(
     streams). Titles / durations / dates are not reliably extractable
     from the obfuscated React payload — for that you need Graph API.
 
-    Example:
+    With `--all`: drives headless Chromium to scroll for older videos.
+
+    Examples:
 
       social facebook videos facebook
+      social facebook videos facebook --all --limit 50
     """
-    _run(facebook.videos, username, json=json, title=f"Videos: {username}")
+    _run(
+        lambda u: facebook.videos(u, limit=limit, all=all_),
+        username, json=json, title=f"Videos: {username}",
+    )
 
 
 @fb_app.command("posts")

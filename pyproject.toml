@@ -9,6 +9,11 @@ dependencies = [
     "rich>=13.7",
 ]
 
+[project.optional-dependencies]
+# Enables Playwright-backed scroll pagination for FB photos/videos and IG feed.
+# After `pip install '.[browser]'`, run `playwright install chromium`.
+browser = ["playwright>=1.40"]
+
 [project.scripts]
 social = "social_cli.main:app"
 

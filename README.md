@@ -27,6 +27,19 @@ Make `social` available system-wide:
 (Uses a plain `ln -s` — no pipx, no system Python pollution. `social uninstall`
 removes it.)
 
+**Optional: browser-backed pagination.** The default HTTP path returns the
+first ~10 photos / videos a Page server-renders. To scroll for more, install
+the `[browser]` extra and use `--all`:
+
+```bash
+.venv/bin/pip install -e '.[browser]'
+.venv/bin/playwright install chromium      # ~100 MB one-time download
+social facebook photos facebook --all --limit 200
+```
+
+This launches a headless Chromium, dismisses FB's login modal with ESC, and
+scrolls until `--limit` items are collected (or the page runs out).
+
 ## Usage
 
 ```bash
@@ -42,9 +55,11 @@ social instagram post https://www.instagram.com/p/DYkrf_cS9-t/
 # Facebook
 social facebook profile zuck
 social facebook post https://www.facebook.com/zuck/posts/...
-social facebook photos facebook      # recent photos (CDN URL + permalink)
-social facebook videos facebook      # recent native MP4 URLs
-social facebook posts  facebook      # best-effort permalinks (limited)
+social facebook photos facebook             # ~10 most recent photos (HTTP)
+social facebook photos facebook --all -n 200  # scroll for more (needs [browser])
+social facebook videos facebook              # recent native MP4 URLs
+social facebook videos facebook --all -n 100  # scroll for more
+social facebook posts  facebook              # best-effort permalinks (limited)
 ```
 
 Add `--json` / `-j` to any command for raw JSON instead of the rich table.

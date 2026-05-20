@@ -121,24 +121,16 @@ def _photo_permalink(fbid: str) -> str:
     return f"https://www.facebook.com/photo/?fbid={fbid}"
 
 
-def photos(username: str, limit: int = 24) -> dict[str, Any]:
-    """List recent photos from a public Page's /photos grid.
-
-    Returns up to ~10–24 unique photos: the CDN image URL, the asset fbid
-    extracted from that URL, and a viewer permalink. The order matches
-    document order on the page (roughly newest-first).
-    """
-    username = username.lstrip("@").strip("/")
-    url = PHOTOS_URL.format(username=username)
-    resp = get(url, headers=_fb_headers())
+def _extract_photos_from_html(html: str) -> list[dict[str, str]]:
+    """Parse the CDN photo URLs out of any chunk of FB HTML."""
+    out: list[dict[str, str]] = []
     seen: set[str] = set()
-    items: list[dict[str, str]] = []
-    for m in _PHOTO_CDN_RE.finditer(resp.text):
+    for m in _PHOTO_CDN_RE.finditer(html):
         fbid = m.group(2)
         if fbid in seen:
             continue
         seen.add(fbid)
-        items.append(
+        out.append(
             {
                 "fbid": fbid,
                 "asset_id": m.group(1),
@@ -146,11 +138,45 @@ def photos(username: str, limit: int = 24) -> dict[str, Any]:
                 "permalink": _photo_permalink(fbid),
             }
         )
-        if len(items) >= limit:
-            break
+    return out
+
+
+def photos(
+    username: str,
+    limit: int = 24,
+    *,
+    all: bool = False,
+) -> dict[str, Any]:
+    """List recent photos from a public Page's /photos grid.
+
+    Returns up to ~10–24 unique photos: the CDN image URL, the asset fbid
+    extracted from that URL, and a viewer permalink. The order matches
+    document order on the page (roughly newest-first).
+
+    When `all=True`, drives a headless Chromium via Playwright to scroll the
+    page and collect older photos beyond the initial server-rendered batch.
+    Requires the optional `[browser]` extra.
+    """
+    username = username.lstrip("@").strip("/")
+    url = PHOTOS_URL.format(username=username)
+    if all:
+        from .browser import scroll_collect
+        items = scroll_collect(
+            url, _extract_photos_from_html, key="fbid", max_items=limit,
+        )
+        return {
+            "username": username,
+            "source": url,
+            "mode": "browser",
+            "count": len(items),
+            "photos": items,
+        }
+    resp = get(url, headers=_fb_headers())
+    items = _extract_photos_from_html(resp.text)[:limit]
     return {
         "username": username,
         "source": url,
+        "mode": "http",
         "count": len(items),
         "photos": items,
     }
@@ -161,32 +187,55 @@ def _decode_json_url(s: str) -> str:
     return s.replace("\\/", "/").encode("utf-8").decode("unicode_escape", errors="replace")
 
 
-def videos(username: str, limit: int = 24) -> dict[str, Any]:
+def _extract_videos_from_html(html: str) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for m in _PLAYABLE_URL_RE.finditer(html):
+        decoded = _decode_json_url(m.group(1))
+        if decoded in seen:
+            continue
+        seen.add(decoded)
+        out.append({"playable_url": decoded})
+    return out
+
+
+def videos(
+    username: str,
+    limit: int = 24,
+    *,
+    all: bool = False,
+) -> dict[str, Any]:
     """List recent native video MP4 URLs from a public Page's /videos page.
 
-    The surrounding React payload is heavily obfuscated, so this returns
-    just the playable URLs (the actual MP4 files) and any video IDs found
-    in the same payload. Titles / durations / dates are not reliably
-    extractable without authentication.
+    Returns playable URLs (the actual MP4 files) and any video IDs in the
+    same payload. Titles / durations / dates are not reliably extractable
+    without authentication.
+
+    When `all=True`, drives a headless Chromium to scroll for older videos.
+    Requires the optional `[browser]` extra.
     """
     username = username.lstrip("@").strip("/")
     url = VIDEOS_URL.format(username=username)
+    if all:
+        from .browser import scroll_collect
+        items = scroll_collect(
+            url, _extract_videos_from_html, key="playable_url", max_items=limit,
+        )
+        return {
+            "username": username,
+            "source": url,
+            "mode": "browser",
+            "count": len(items),
+            "playable_urls": [i["playable_url"] for i in items],
+        }
     resp = get(url, headers=_fb_headers())
     text = resp.text
-    seen_urls: set[str] = set()
-    playable: list[str] = []
-    for m in _PLAYABLE_URL_RE.finditer(text):
-        decoded = _decode_json_url(m.group(1))
-        if decoded in seen_urls:
-            continue
-        seen_urls.add(decoded)
-        playable.append(decoded)
-        if len(playable) >= limit:
-            break
+    playable = [i["playable_url"] for i in _extract_videos_from_html(text)][:limit]
     video_ids = list(dict.fromkeys(_VIDEO_ID_RE.findall(text)))[:limit]
     return {
         "username": username,
         "source": url,
+        "mode": "http",
         "count": len(playable),
         "video_ids": video_ids,
         "playable_urls": playable,
