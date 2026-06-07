@@ -185,3 +185,17 @@ def test_linkedin_jobs_live():
     assert first["id"]
     assert first["url"].startswith("https://www.linkedin.com/jobs/view/")
     assert first["title"] or first["company"]
+
+
+def test_linkedin_company_jobs_live():
+    try:
+        data = linkedin.company_jobs("linkedin", limit=1)
+    except Exception as e:  # noqa: BLE001
+        _skip_on_transient(e)
+    if data["count"] == 0:
+        pytest.skip("LinkedIn returned no logged-out company job cards")
+    first = data["jobs"][0]
+    assert data["slug"] == "linkedin"
+    assert first["id"]
+    assert first["url"].startswith("https://www.linkedin.com/jobs/view/")
+    assert first["company"] or first["title"]

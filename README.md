@@ -66,6 +66,8 @@ social facebook posts  facebook              # best-effort permalinks (limited)
 social linkedin profile some-person
 social linkedin company openai
 social linkedin business openai              # alias for company
+social linkedin company-jobs linkedin -n 25
+social linkedin company-posts openai         # best-effort; often sign-in gated
 social linkedin school stanford-university
 social linkedin post urn:li:activity:123456789
 social linkedin job 1234567890
@@ -115,6 +117,9 @@ LinkedIn's guest job endpoint with JSON-LD and criteria parsing. `jobs` returns
 public guest search cards with job id, title, company, location, listed date,
 salary text, image, and URL. `search` best-effort parses logged-out public
 search pages for people, companies/businesses, schools, posts, and jobs.
+`company-jobs` lists job cards rendered directly on a company's public jobs
+page, and `company-posts` extracts public company activity links when LinkedIn
+does not redirect that page to sign-in.
 
 ## Caveats
 

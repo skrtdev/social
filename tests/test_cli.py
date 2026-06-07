@@ -135,6 +135,54 @@ def test_linkedin_jobs_json_passes_options(monkeypatch):
     assert seen == {"keywords": "founding engineer", "location": "Remote", "limit": 2}
 
 
+def test_linkedin_company_jobs_json_passes_limit(monkeypatch):
+    seen = {}
+
+    def fake_company_jobs(company_name, *, limit=25):
+        seen["company_name"] = company_name
+        seen["limit"] = limit
+        return {
+            "type": "company_jobs",
+            "slug": company_name,
+            "count": 0,
+            "jobs": [],
+        }
+
+    monkeypatch.setattr(linkedin, "company_jobs", fake_company_jobs)
+    result = runner.invoke(
+        main.app,
+        ["linkedin", "company-jobs", "linkedin", "--limit", "3", "--json"],
+    )
+    assert result.exit_code == 0, result.stdout
+    data = jsonlib.loads(result.stdout)
+    assert data["type"] == "company_jobs"
+    assert seen == {"company_name": "linkedin", "limit": 3}
+
+
+def test_linkedin_company_posts_json_passes_limit(monkeypatch):
+    seen = {}
+
+    def fake_company_posts(company_name, *, limit=25):
+        seen["company_name"] = company_name
+        seen["limit"] = limit
+        return {
+            "type": "company_posts",
+            "slug": company_name,
+            "count": 0,
+            "posts": [],
+        }
+
+    monkeypatch.setattr(linkedin, "company_posts", fake_company_posts)
+    result = runner.invoke(
+        main.app,
+        ["linkedin", "company-posts", "openai", "-n", "4", "--json"],
+    )
+    assert result.exit_code == 0, result.stdout
+    data = jsonlib.loads(result.stdout)
+    assert data["type"] == "company_posts"
+    assert seen == {"company_name": "openai", "limit": 4}
+
+
 def test_x_profile_runtime_error_exits_1(monkeypatch):
     monkeypatch.setattr(x, "get", lambda url, **kw: FakeResponse(text="<html></html>"))
     result = runner.invoke(main.app, ["x", "profile", "ghost"])

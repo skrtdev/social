@@ -114,6 +114,113 @@ def test_business_alias_calls_company(patch_get):
     assert linkedin.business("acme")["name"] == "Acme"
 
 
+def test_company_jobs_parses_company_page_main_job_cards(patch_get):
+    seen = {}
+    html = """
+    <html>
+      <head><title>LinkedIn Jobs | LinkedIn</title></head>
+      <body>
+        <ul>
+          <li>
+            <div class="base-main-card main-job-card" data-entity-urn="urn:li:jobPosting:4425">
+              <a class="base-card__full-link" href="https://ca.linkedin.com/jobs/view/sales-lead-at-linkedin-4425?trk=org-job-results">
+                <span class="sr-only">Sales Lead</span>
+              </a>
+              <img class="hue-web-entity__image" data-delayed-url="https://img/linkedin.png">
+              <h3 class="base-main-card__title base-main-card__title--link">Sales Lead</h3>
+              <h4 class="base-main-card__subtitle">
+                <a href="/company/linkedin?trk=org-job-results">LinkedIn</a>
+              </h4>
+              <span class="main-job-card__location">Toronto, Ontario, Canada</span>
+              <time class="main-job-card__listdate--new" datetime="2026-06-06">22 hours ago</time>
+            </div>
+          </li>
+        </ul>
+      </body>
+    </html>
+    """
+
+    def factory(url, kwargs):
+        seen["url"] = url
+        return FakeResponse(text=html)
+
+    patch_get(linkedin, factory)
+    out = linkedin.company_jobs("https://www.linkedin.com/company/linkedin/?trk=public")
+    assert seen["url"] == "https://www.linkedin.com/company/linkedin/jobs/"
+    assert out["type"] == "company_jobs"
+    assert out["slug"] == "linkedin"
+    assert out["company"] == "LinkedIn Jobs"
+    assert out["count"] == 1
+    assert out["jobs"][0] == {
+        "id": "4425",
+        "url": "https://www.linkedin.com/jobs/view/sales-lead-at-linkedin-4425",
+        "title": "Sales Lead",
+        "company": "LinkedIn",
+        "company_url": "https://www.linkedin.com/company/linkedin",
+        "location": "Toronto, Ontario, Canada",
+        "listed_at": "2026-06-06",
+        "listed_text": "22 hours ago",
+        "salary": None,
+        "image": "https://img/linkedin.png",
+    }
+
+
+def test_company_jobs_respects_limit(patch_get):
+    html = "".join(
+        f"""
+        <li>
+          <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/role-{i}">
+            role
+          </a>
+          <h3 class="base-main-card__title">Role {i}</h3>
+        </li>
+        """
+        for i in range(1, 4)
+    )
+    patch_get(linkedin, lambda url, kwargs: FakeResponse(text=html))
+    out = linkedin.company_jobs("acme", limit=2)
+    assert out["count"] == 2
+    assert [job["id"] for job in out["jobs"]] == ["1", "2"]
+
+
+def test_company_posts_extracts_public_post_links(patch_get):
+    html = """
+    <html>
+      <head><title>OpenAI Posts | LinkedIn</title></head>
+      <body>
+        <a href="/feed/update/urn:li:activity:123?trk=updates">Launch update</a>
+        <a href="https://www.linkedin.com/posts/openai_activity-456?utm_source=share">Research note</a>
+        <a href="https://www.linkedin.com/posts/openai_activity-456?duplicate=true">Duplicate</a>
+        <a href="https://example.com/posts/not-linkedin">Ignore</a>
+      </body>
+    </html>
+    """
+    seen = {}
+
+    def factory(url, kwargs):
+        seen["url"] = url
+        return FakeResponse(text=html)
+
+    patch_get(linkedin, factory)
+    out = linkedin.company_posts("@openai/", limit=10)
+    assert seen["url"] == "https://www.linkedin.com/company/openai/posts/"
+    assert out["type"] == "company_posts"
+    assert out["company"] == "OpenAI Posts"
+    assert out["count"] == 2
+    assert out["posts"] == [
+        {
+            "type": "post",
+            "title": "Launch update",
+            "url": "https://www.linkedin.com/feed/update/urn:li:activity:123",
+        },
+        {
+            "type": "post",
+            "title": "Research note",
+            "url": "https://www.linkedin.com/posts/openai_activity-456",
+        },
+    ]
+
+
 def test_school_parses_educational_page(patch_get):
     ld = {
         "@type": "CollegeOrUniversity",

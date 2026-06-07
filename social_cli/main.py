@@ -47,6 +47,7 @@ Examples:
   social facebook photos facebook --all --limit 100   # needs \\[browser]
   social linkedin profile some-person
   social linkedin business openai
+  social linkedin company-jobs linkedin --limit 25
   social linkedin jobs "founding engineer" --location "San Francisco"
   social linkedin search "openai" --type companies
 
@@ -104,6 +105,8 @@ LinkedIn lookups via public logged-out pages and guest jobs endpoints.
   profile   — public person profile metadata (name, headline, image, orgs)
   company   — public company/business page metadata
   business  — alias for company
+  company-jobs   — jobs rendered on a public company jobs page
+  company-posts  — best-effort public company activity/post links
   school    — public school page metadata
   post      — public feed update metadata by URL / URN / activity id
   job       — single job by numeric id or /jobs/view/... URL
@@ -467,6 +470,55 @@ def li_business(
 ) -> None:
     """Alias for `social linkedin company`."""
     _run(linkedin.business, company_name, json=json, title=f"LinkedIn business: {company_name}")
+
+
+@li_app.command("company-jobs")
+def li_company_jobs(
+    company_name: str = typer.Argument(
+        ...,
+        help="LinkedIn company slug or URL.",
+        metavar="COMPANY_OR_URL",
+    ),
+    limit: int = typer.Option(25, "--limit", "-n", help="Max job cards to return."),
+    json: bool = JsonOpt,
+) -> None:
+    """List jobs rendered on a public LinkedIn company jobs page.
+
+    Example:
+
+      social linkedin company-jobs linkedin
+      social linkedin company-jobs https://www.linkedin.com/company/linkedin/ -n 50 --json
+    """
+    _run(
+        lambda c: linkedin.company_jobs(c, limit=limit),
+        company_name,
+        json=json,
+        title=f"LinkedIn company jobs: {company_name}",
+    )
+
+
+@li_app.command("company-posts")
+def li_company_posts(
+    company_name: str = typer.Argument(
+        ...,
+        help="LinkedIn company slug or URL.",
+        metavar="COMPANY_OR_URL",
+    ),
+    limit: int = typer.Option(25, "--limit", "-n", help="Max post links to return."),
+    json: bool = JsonOpt,
+) -> None:
+    """Best-effort public LinkedIn company activity/post links.
+
+    LinkedIn commonly redirects company activity to sign-in for logged-out
+    visitors, so this command returns whatever post links are public plus a
+    note describing the limitation.
+    """
+    _run(
+        lambda c: linkedin.company_posts(c, limit=limit),
+        company_name,
+        json=json,
+        title=f"LinkedIn company posts: {company_name}",
+    )
 
 
 @li_app.command("school")

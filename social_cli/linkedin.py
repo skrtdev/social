@@ -39,7 +39,7 @@ _SCRIPT_STYLE_RE = re.compile(
 _TAG_RE = re.compile(r"<[^>]+>")
 _ANCHOR_RE = re.compile(r"<a\s+[^>]*href=(['\"])(.*?)\1[^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
 _TIME_RE = re.compile(r"<time\b[^>]*datetime=(['\"])(.*?)\1[^>]*>(.*?)</time>", re.IGNORECASE | re.DOTALL)
-_JOB_ID_RE = re.compile(r"/jobs/view/(\d+)")
+_JOB_ID_RE = re.compile(r"/jobs/view/(?:[^/?#]*-)?(\d+)(?=$|[/?#])")
 
 _SEARCH_KINDS = {
     "all": "all",
@@ -163,10 +163,25 @@ def _entity_url(value: Any) -> str | None:
     return None
 
 
+def _is_linkedin_url(value: str) -> bool:
+    host = urlparse(value).netloc.lower()
+    return host == "linkedin.com" or host.endswith(".linkedin.com")
+
+
 def _external_url(value: Any) -> str | None:
     url = value if isinstance(value, str) else None
-    if not url or "linkedin.com" in urlparse(url).netloc.lower():
+    if not url or _is_linkedin_url(url):
         return None
+    return url
+
+
+def _canonical_linkedin_url(value: str) -> str:
+    url = html.unescape(value).split("?", 1)[0]
+    if not url.startswith("http"):
+        url = urljoin(BASE_URL, url)
+    parsed = urlparse(url)
+    if _is_linkedin_url(url):
+        return f"https://www.linkedin.com{parsed.path}"
     return url
 
 
@@ -515,7 +530,7 @@ def _extract_job_cards(text: str) -> list[dict[str, Any]]:
         href_match = re.search(r"href=(['\"])(https?://[^'\"]*/jobs/view/[^'\"]+)\1", card)
         if not href_match:
             continue
-        url = html.unescape(href_match.group(2)).split("?", 1)[0]
+        url = _canonical_linkedin_url(href_match.group(2))
         job_id_match = _JOB_ID_RE.search(url)
         key = job_id_match.group(1) if job_id_match else url
         if key in seen:
@@ -523,7 +538,7 @@ def _extract_job_cards(text: str) -> list[dict[str, Any]]:
         seen.add(key)
         time_match = _TIME_RE.search(card)
         company_link = re.search(
-            r"<h4[^>]*class=['\"][^'\"]*base-search-card__subtitle[^'\"]*['\"][^>]*>.*?"
+            r"<h4[^>]*class=['\"][^'\"]*(?:base-search-card__subtitle|base-main-card__subtitle)[^'\"]*['\"][^>]*>.*?"
             r"<a[^>]*href=(['\"])(.*?)\1[^>]*>(.*?)</a>",
             card,
             re.IGNORECASE | re.DOTALL,
@@ -532,15 +547,28 @@ def _extract_job_cards(text: str) -> list[dict[str, Any]]:
             {
                 "id": key,
                 "url": url,
-                "title": _tag_text(card, "h3", "base-search-card__title"),
-                "company": _clean_text(company_link.group(3)) if company_link else _tag_text(card, "h4", "base-search-card__subtitle"),
-                "company_url": html.unescape(company_link.group(2)).split("?", 1)[0] if company_link else None,
-                "location": _tag_text(card, "span", "job-search-card__location"),
+                "title": (
+                    _tag_text(card, "h3", "base-search-card__title")
+                    or _tag_text(card, "h3", "base-main-card__title")
+                ),
+                "company": (
+                    _clean_text(company_link.group(3))
+                    if company_link
+                    else _tag_text(card, "h4", "base-search-card__subtitle")
+                    or _tag_text(card, "h4", "base-main-card__subtitle")
+                ),
+                "company_url": _canonical_linkedin_url(company_link.group(2)) if company_link else None,
+                "location": (
+                    _tag_text(card, "span", "job-search-card__location")
+                    or _tag_text(card, "span", "main-job-card__location")
+                ),
                 "listed_at": html.unescape(time_match.group(2)) if time_match else None,
                 "listed_text": _clean_text(time_match.group(3)) if time_match else None,
                 "salary": _tag_text(card, "span", "job-search-card__salary-info"),
                 "image": _attr_from_tag(card, "img", "artdeco-entity-image", "data-delayed-url")
-                or _attr_from_tag(card, "img", "artdeco-entity-image", "src"),
+                or _attr_from_tag(card, "img", "hue-web-entity__image", "data-delayed-url")
+                or _attr_from_tag(card, "img", "artdeco-entity-image", "src")
+                or _attr_from_tag(card, "img", "hue-web-entity__image", "src"),
             }
         )
     return out
@@ -586,6 +614,78 @@ def jobs(
     }
 
 
+def company_jobs(company_name: str, *, limit: int = 25) -> dict[str, Any]:
+    """List jobs currently rendered on a public LinkedIn company jobs page."""
+    slug, _ = _slug_or_url(company_name, "company", COMPANY_URL)
+    url = COMPANY_URL.format(slug=slug).rstrip("/") + "/jobs/"
+    resp = get(url, headers=_linkedin_headers())
+    cards = _extract_job_cards(resp.text)[:limit]
+    metas = _parse_meta(resp.text)
+    page_title = _title(resp.text) or _strip_linkedin_suffix(metas.get("og:title"))
+    return {
+        "type": "company_jobs",
+        "slug": slug,
+        "company": page_title,
+        "source": url,
+        "count": len(cards),
+        "jobs": cards,
+        "note": "LinkedIn renders only a limited logged-out slice of company jobs.",
+    }
+
+
+def _extract_post_links(text: str, limit: int) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for _, href, label_html in _ANCHOR_RE.findall(text):
+        url = html.unescape(href)
+        if not url.startswith("http"):
+            url = urljoin(BASE_URL, url)
+        if not _is_linkedin_url(url):
+            continue
+        if "/feed/update/" not in url and "/posts/" not in url:
+            continue
+        url = _canonical_linkedin_url(url)
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append(
+            {
+                "type": "post",
+                "title": _clean_text(label_html) or url,
+                "url": url,
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
+def company_posts(company_name: str, *, limit: int = 25) -> dict[str, Any]:
+    """Best-effort list of public post links on a LinkedIn company posts page.
+
+    LinkedIn commonly redirects this surface to sign-in for logged-out users;
+    when that happens, the command returns an empty list plus an explicit note.
+    """
+    slug, _ = _slug_or_url(company_name, "company", COMPANY_URL)
+    url = COMPANY_URL.format(slug=slug).rstrip("/") + "/posts/"
+    resp = get(url, headers=_linkedin_headers())
+    posts = _extract_post_links(resp.text, limit)
+    metas = _parse_meta(resp.text)
+    page_title = _title(resp.text) or _strip_linkedin_suffix(metas.get("og:title"))
+    return {
+        "type": "company_posts",
+        "slug": slug,
+        "company": page_title,
+        "source": url,
+        "count": len(posts),
+        "posts": posts,
+        "note": (
+            "LinkedIn often sign-in gates company activity for logged-out "
+            "visitors; results are best-effort."
+        ),
+    }
+
+
 def _result_type(url: str) -> str:
     path = urlparse(url).path
     if "/in/" in path:
@@ -608,7 +708,7 @@ def _extract_search_results(text: str, limit: int) -> list[dict[str, str]]:
         url = html.unescape(href)
         if not url.startswith("http"):
             url = urljoin(BASE_URL, url)
-        if "linkedin.com" not in url:
+        if not _is_linkedin_url(url):
             continue
         if not any(part in url for part in ("/in/", "/company/", "/school/", "/feed/update/", "/jobs/view/", "/posts/")):
             continue
