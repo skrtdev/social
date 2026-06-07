@@ -1,9 +1,10 @@
 # social
 
-A small Python CLI to fetch public profile and post info from **X / Twitter**,
-**Instagram**, and **Facebook**. Built with [typer](https://typer.tiangolo.com/)
-and [curl_cffi](https://github.com/yifeikong/curl_cffi) (impersonates a real
-Chrome to slip past basic anti-bot filters).
+A small Python CLI to fetch public profile, post, business, search, and job
+info from **X / Twitter**, **Instagram**, **Facebook**, and **LinkedIn**. Built
+with [typer](https://typer.tiangolo.com/) and
+[curl_cffi](https://github.com/yifeikong/curl_cffi) (impersonates a real Chrome
+to slip past basic anti-bot filters).
 
 No API keys required — everything goes through the platforms' public
 embed / OpenGraph surfaces. That means the data is shallower than what the
@@ -60,6 +61,16 @@ social facebook photos facebook --all -n 200  # scroll for more (needs [browser]
 social facebook videos facebook              # recent native MP4 URLs
 social facebook videos facebook --all -n 100  # scroll for more
 social facebook posts  facebook              # best-effort permalinks (limited)
+
+# LinkedIn
+social linkedin profile some-person
+social linkedin company openai
+social linkedin business openai              # alias for company
+social linkedin school stanford-university
+social linkedin post urn:li:activity:123456789
+social linkedin job 1234567890
+social linkedin jobs "founding engineer" --location "San Francisco" -n 25
+social linkedin search "openai" --type companies
 ```
 
 Add `--json` / `-j` to any command for raw JSON instead of the rich table.
@@ -86,6 +97,25 @@ permalinks; `videos` returns native MP4 playable URLs. Post-feed text isn't
 server-rendered to logged-out visitors, so `posts` is best-effort and thin.
 Groups always require login — not supported.
 
+**LinkedIn profiles** — public logged-out person metadata: name, headline,
+description, image, current company, education, followers/connections text
+when present, and canonical URL.
+
+**LinkedIn businesses / companies / schools** — public page metadata: name,
+description, logo/image, website, industry, company size, headquarters, type,
+founded date, specialties, followers text, and jobs/posts URLs when LinkedIn
+renders them.
+
+**LinkedIn posts** — public feed update metadata by full URL, URN, or numeric
+activity id: title/text, author, published/updated time, image, and video when
+OpenGraph or JSON-LD exposes it.
+
+**LinkedIn jobs and search** — `job` fetches a single posting by id or URL using
+LinkedIn's guest job endpoint with JSON-LD and criteria parsing. `jobs` returns
+public guest search cards with job id, title, company, location, listed date,
+salary text, image, and URL. `search` best-effort parses logged-out public
+search pages for people, companies/businesses, schools, posts, and jobs.
+
 ## Caveats
 
 These are all unauthenticated, public-only paths:
@@ -94,6 +124,9 @@ These are all unauthenticated, public-only paths:
 - **Instagram** sometimes serves `_a=1` JSON, sometimes only OpenGraph; both
   paths are supported.
 - **Facebook** gates the post feed and most reactions behind login.
+- **LinkedIn** gates most non-job data behind sign-in. Jobs are the richest
+  logged-out surface; profiles, businesses, posts, and search return whatever
+  public metadata LinkedIn renders.
 
 For real volume or richer fields (private accounts, full timelines, native
 MP4 URLs on FB videos), use the official APIs with a token.
@@ -101,8 +134,8 @@ MP4 URLs on FB videos), use the official APIs with a token.
 ## Development
 
 ```bash
-.venv/bin/pytest                 # 41 unit tests, fully mocked (no network)
-.venv/bin/pytest -m network      # live smoke tests against all three platforms
+.venv/bin/pytest                 # unit tests, fully mocked (no network)
+.venv/bin/pytest -m network      # live smoke tests against all four platforms
 ```
 
 Live tests gracefully `skip` on 429s / rate-limits so they don't false-fail.

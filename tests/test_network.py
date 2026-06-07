@@ -1,4 +1,4 @@
-"""Real-network smoke tests against live X, Instagram, and Facebook endpoints.
+"""Real-network smoke tests against live X, Instagram, Facebook, and LinkedIn endpoints.
 
 Opt-in only. Run with:
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from social_cli import facebook, instagram, x
+from social_cli import facebook, instagram, linkedin, x
 from social_cli.http import FetchError
 
 pytestmark = pytest.mark.network
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.network
 
 def _skip_on_transient(err: Exception) -> None:
     """Skip on rate-limiting / blocks; re-raise real bugs."""
-    if isinstance(err, FetchError) and err.status in {401, 403, 404, 429, 500, 502, 503}:
+    if isinstance(err, FetchError) and err.status in {401, 403, 404, 429, 500, 502, 503, 999}:
         pytest.skip(f"upstream returned {err.status}; transient")
     raise err
 
@@ -159,3 +159,29 @@ def test_facebook_posts_live():
     # Logged-out main page is thin — we just verify the structure and note.
     assert "logged-out" in data["note"]
     assert isinstance(data["posts"], list)
+
+
+# ---------------------------------------------------------------- LinkedIn
+
+
+def test_linkedin_company_live():
+    try:
+        data = linkedin.company("linkedin")
+    except Exception as e:  # noqa: BLE001
+        _skip_on_transient(e)
+    assert data["slug"] == "linkedin"
+    assert data["name"] or data["description"]
+    assert (data["url"] or "").startswith("https://www.linkedin.com/company/")
+
+
+def test_linkedin_jobs_live():
+    try:
+        data = linkedin.jobs("software engineer", location="United States", limit=1)
+    except Exception as e:  # noqa: BLE001
+        _skip_on_transient(e)
+    if data["count"] == 0:
+        pytest.skip("LinkedIn returned no logged-out guest job cards")
+    first = data["jobs"][0]
+    assert first["id"]
+    assert first["url"].startswith("https://www.linkedin.com/jobs/view/")
+    assert first["title"] or first["company"]

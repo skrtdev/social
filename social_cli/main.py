@@ -7,6 +7,8 @@ Layout:
     social instagram post SHORTCODE
     social facebook profile some.page
     social facebook post https://www.facebook.com/.../posts/...
+    social linkedin profile some-person
+    social linkedin business openai
 """
 
 from __future__ import annotations
@@ -21,18 +23,18 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import facebook, instagram, x
+from . import facebook, instagram, linkedin, x
 from .http import FetchError
 
 DEFAULT_INSTALL_DIR = Path.home() / ".local" / "bin"
 
 _ROOT_HELP = """\
-Fetch public profile and post info from X, Instagram, and Facebook.
+Fetch public profile and post info from X, Instagram, Facebook, and LinkedIn.
 
 Uses each platform's public, unauthenticated endpoints (X syndication,
-Instagram web_profile_info / OpenGraph, Facebook OpenGraph). No API keys
-required — but data is limited to what those surfaces expose, and the
-platforms rate-limit aggressively.
+Instagram web_profile_info / OpenGraph, Facebook OpenGraph, LinkedIn logged-out
+pages / guest jobs). No API keys required — but data is limited to what those
+surfaces expose, and the platforms rate-limit aggressively.
 
 Examples:
 
@@ -43,6 +45,10 @@ Examples:
   social facebook profile zuck
   social facebook post https://www.facebook.com/zuck/posts/...
   social facebook photos facebook --all --limit 100   # needs \\[browser]
+  social linkedin profile some-person
+  social linkedin business openai
+  social linkedin jobs "founding engineer" --location "San Francisco"
+  social linkedin search "openai" --type companies
 
 Global flags:
   -j / --json   Emit raw JSON instead of a rich table (works on any subcommand).
@@ -92,6 +98,23 @@ Note: Facebook Groups always require login and are not supported.
 For richer page data, use the Graph API with a token.
 """
 
+_LI_HELP = """\
+LinkedIn lookups via public logged-out pages and guest jobs endpoints.
+
+  profile   — public person profile metadata (name, headline, image, orgs)
+  company   — public company/business page metadata
+  business  — alias for company
+  school    — public school page metadata
+  post      — public feed update metadata by URL / URN / activity id
+  job       — single job by numeric id or /jobs/view/... URL
+  jobs      — guest job search cards with company, location, listed date
+  search    — best-effort public search over people, companies, posts, jobs
+
+LinkedIn exposes very little to logged-out visitors outside jobs, so profile,
+company, school, post, and non-job search data is best-effort and may be
+sign-in gated.
+"""
+
 app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
@@ -100,9 +123,11 @@ app = typer.Typer(
 x_app = typer.Typer(no_args_is_help=True, help=_X_HELP)
 ig_app = typer.Typer(no_args_is_help=True, help=_IG_HELP)
 fb_app = typer.Typer(no_args_is_help=True, help=_FB_HELP)
+li_app = typer.Typer(no_args_is_help=True, help=_LI_HELP)
 app.add_typer(x_app, name="x")
 app.add_typer(ig_app, name="instagram")
 app.add_typer(fb_app, name="facebook")
+app.add_typer(li_app, name="linkedin")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -385,6 +410,153 @@ def fb_posts(
       social facebook posts facebook
     """
     _run(facebook.posts, username, json=json, title=f"Posts: {username}")
+
+
+@li_app.command("profile")
+def li_profile(
+    username: str = typer.Argument(
+        ...,
+        help="LinkedIn public profile slug or URL.",
+        metavar="USERNAME_OR_URL",
+    ),
+    json: bool = JsonOpt,
+) -> None:
+    """Fetch a public LinkedIn person profile.
+
+    Returns the public name, headline, description, image, current company,
+    education, followers/connections text when present, and the canonical URL.
+
+    Example:
+
+      social linkedin profile some-person
+      social linkedin profile https://www.linkedin.com/in/some-person/ --json
+    """
+    _run(linkedin.profile, username, json=json, title=f"LinkedIn profile: {username}")
+
+
+@li_app.command("company")
+def li_company(
+    company_name: str = typer.Argument(
+        ...,
+        help="LinkedIn company slug or URL.",
+        metavar="COMPANY_OR_URL",
+    ),
+    json: bool = JsonOpt,
+) -> None:
+    """Fetch a public LinkedIn company page.
+
+    Returns business metadata such as description, industry, company size,
+    headquarters, followers text, image/logo, and links to jobs/posts.
+
+    Example:
+
+      social linkedin company openai
+      social linkedin company https://www.linkedin.com/company/openai/ --json
+    """
+    _run(linkedin.company, company_name, json=json, title=f"LinkedIn company: {company_name}")
+
+
+@li_app.command("business")
+def li_business(
+    company_name: str = typer.Argument(
+        ...,
+        help="LinkedIn business/company slug or URL.",
+        metavar="BUSINESS_OR_URL",
+    ),
+    json: bool = JsonOpt,
+) -> None:
+    """Alias for `social linkedin company`."""
+    _run(linkedin.business, company_name, json=json, title=f"LinkedIn business: {company_name}")
+
+
+@li_app.command("school")
+def li_school(
+    school_name: str = typer.Argument(
+        ...,
+        help="LinkedIn school slug or URL.",
+        metavar="SCHOOL_OR_URL",
+    ),
+    json: bool = JsonOpt,
+) -> None:
+    """Fetch a public LinkedIn school page."""
+    _run(linkedin.school, school_name, json=json, title=f"LinkedIn school: {school_name}")
+
+
+@li_app.command("post")
+def li_post(
+    url_or_urn: str = typer.Argument(
+        ...,
+        help="LinkedIn feed update URL, URN, or bare numeric activity id.",
+        metavar="URL_OR_URN",
+    ),
+    json: bool = JsonOpt,
+) -> None:
+    """Fetch a public LinkedIn feed post/update."""
+    _run(linkedin.post, url_or_urn, json=json, title="LinkedIn post")
+
+
+@li_app.command("job")
+def li_job(
+    job_id_or_url: str = typer.Argument(
+        ...,
+        help="LinkedIn numeric job id or /jobs/view/... URL.",
+        metavar="JOB_ID_OR_URL",
+    ),
+    json: bool = JsonOpt,
+) -> None:
+    """Fetch one LinkedIn job posting."""
+    _run(linkedin.job, job_id_or_url, json=json, title=f"LinkedIn job: {job_id_or_url}")
+
+
+@li_app.command("jobs")
+def li_jobs(
+    keywords: str = typer.Argument(
+        ...,
+        help="Job search keywords.",
+        metavar="KEYWORDS",
+    ),
+    location: str | None = typer.Option(None, "--location", "-l", help="Optional job search location."),
+    limit: int = typer.Option(25, "--limit", "-n", help="Max job cards to return."),
+    json: bool = JsonOpt,
+) -> None:
+    """Search LinkedIn public guest job cards."""
+    _run(
+        lambda q: linkedin.jobs(q, location=location, limit=limit),
+        keywords,
+        json=json,
+        title=f"LinkedIn jobs: {keywords}",
+    )
+
+
+@li_app.command("search")
+def li_search(
+    query: str = typer.Argument(
+        ...,
+        help="Search query.",
+        metavar="QUERY",
+    ),
+    kind: str = typer.Option(
+        "all",
+        "--type",
+        "-t",
+        help="Search type: all, people, companies, businesses, schools, posts, content, jobs.",
+    ),
+    location: str | None = typer.Option(None, "--location", "-l", help="Location for --type jobs."),
+    limit: int = typer.Option(10, "--limit", "-n", help="Max results to return."),
+    json: bool = JsonOpt,
+) -> None:
+    """Best-effort public LinkedIn search.
+
+    Non-job search pages are often sign-in gated, so this command returns
+    whatever public links LinkedIn renders for logged-out users. For jobs,
+    it uses LinkedIn's guest job search endpoint.
+    """
+    _run(
+        lambda q: linkedin.search(q, kind=kind, location=location, limit=limit),
+        query,
+        json=json,
+        title=f"LinkedIn search: {query}",
+    )
 
 
 def _entrypoint_path() -> Path:

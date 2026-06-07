@@ -6,7 +6,7 @@ import json as jsonlib
 
 from typer.testing import CliRunner
 
-from social_cli import facebook, instagram, main, x
+from social_cli import facebook, instagram, linkedin, main, x
 from tests.conftest import FakeResponse
 
 runner = CliRunner()
@@ -18,6 +18,7 @@ def test_root_shows_subcommands():
     assert "x" in result.stdout
     assert "instagram" in result.stdout
     assert "facebook" in result.stdout
+    assert "linkedin" in result.stdout
 
 
 def test_x_profile_json(monkeypatch):
@@ -88,6 +89,50 @@ def test_facebook_profile_handles_404(monkeypatch):
     result = runner.invoke(main.app, ["facebook", "profile", "missing"])
     assert result.exit_code == 2
     assert "404" in result.stderr or "404" in result.stdout
+
+
+def test_linkedin_business_json(monkeypatch):
+    monkeypatch.setattr(
+        linkedin,
+        "business",
+        lambda company_name: {
+            "type": "organization",
+            "slug": company_name,
+            "name": "OpenAI",
+        },
+    )
+    result = runner.invoke(main.app, ["linkedin", "business", "openai", "--json"])
+    assert result.exit_code == 0, result.stdout
+    data = jsonlib.loads(result.stdout)
+    assert data["type"] == "organization"
+    assert data["slug"] == "openai"
+    assert data["name"] == "OpenAI"
+
+
+def test_linkedin_jobs_json_passes_options(monkeypatch):
+    seen = {}
+
+    def fake_jobs(keywords, *, location=None, limit=25):
+        seen["keywords"] = keywords
+        seen["location"] = location
+        seen["limit"] = limit
+        return {
+            "query": keywords,
+            "location": location,
+            "count": 0,
+            "jobs": [],
+        }
+
+    monkeypatch.setattr(linkedin, "jobs", fake_jobs)
+    result = runner.invoke(
+        main.app,
+        ["linkedin", "jobs", "founding engineer", "--location", "Remote", "--limit", "2", "--json"],
+    )
+    assert result.exit_code == 0, result.stdout
+    data = jsonlib.loads(result.stdout)
+    assert data["query"] == "founding engineer"
+    assert data["location"] == "Remote"
+    assert seen == {"keywords": "founding engineer", "location": "Remote", "limit": 2}
 
 
 def test_x_profile_runtime_error_exits_1(monkeypatch):

@@ -1,3 +1,3 @@
-"""social-cli: fetch public profile and post data from X, Instagram, Facebook."""
+"""social-cli: fetch public social profile, post, business, search, and job data."""
 
 __version__ = "0.1.0"
